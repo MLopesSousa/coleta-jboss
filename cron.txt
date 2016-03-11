@@ -1,0 +1,2 @@
+1 */4 * * * su - jboss -c "/home/jboss/coleta.sh buildBase"
+*/5 * * * * su - jboss -c "/home/jboss/coleta.sh buildMetrics >> /tmp/coleta/moni.txt"
