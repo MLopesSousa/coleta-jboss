@@ -1,17 +1,19 @@
 #!/bin/bash
 
-IP="172.30.121.73"
-PORT=9999
-CMD="/usr/jboss/jboss-eap-6.1/bin/jboss-cli.sh --connect --controller=${IP}:${PORT}"
-DATA_DIR=/tmp/moni
+IP="10.10.64.58"
+PORT=9992
+#CMD="/usr/jboss/jboss-eap-7.1/bin/jboss-cli.sh --connect --controller=${IP}:${PORT}"
+CMD="/usr/jboss/jboss-eap-7.1/bin/jboss-cli.sh -c --controller=remote://${IP}:${PORT}"
+DATA_DIR=/tmp/moni-xxxx
 DBDIR=$DATA_DIR/db
 LOG_FILE=$DATA_DIR/moni.log
 TIMESTAMP="date +%Y-%m-%dT%H:%M:%S-0300"
-ENVIRONMENT="PRODUCAO-INTRANET"
-APP_SERVER="jboss-eap-6.1"
+ENVIRONMENT="PRODUCAO-DMZ-XXXX"
+APP_SERVER="jboss-eap-7.1"
 OPT=$1
 
 HOSTSFILE=$DATA_DIR/hosts.txt
+X_HOSTSFILE=$DATA_DIR/x_hosts.txt
 SERVERSFILE=$DATA_DIR/servers.txt
 SERVERGROUPSFILE=$DATA_DIR/servergroups.txt
 APPLICATIONSFILE=$DATA_DIR/applications.txt
@@ -28,7 +30,6 @@ PIDFILE=/tmp/${SCRIPTNAME}.pid
 PIDFILECOUNT=$DATA_DIR/pidfilecount.txt
 
 touch ${PIDFILECOUNT}
-
 if [ -f ${PIDFILE} ]; then
    OLDPID=`cat ${PIDFILE}`
    RESULT=`ps -ef | grep ${OLDPID} | grep ${SCRIPTNAME}`
@@ -95,6 +96,35 @@ function buildInstanceListFunction() {
         done
 
         testTmpFile $TMP_FILE $SERVERSFILE
+}
+
+function buildDatasourceListFunction {
+        TMP_FILE=$DATA_DIR/moni_tmp.txt && echo "" > $DATA_DIR/moni_tmp.txt
+
+        profiles=$(awk -F':' '{print $5}' $SERVERGROUPSFILE |sort |uniq)
+        for profile in $profiles; do
+                for pool in $($CMD "ls /profile=$profile/subsystem=datasources/data-source="); do
+                        jndi=$($CMD "/profile=$profile/subsystem=datasources/data-source=$pool:read-resource" |grep 'jndi-name' |awk -F'=>' '{print $2}' |sed 's/,//g' |tr -d '[ ]' |sed 's/"//g')
+                        for host in $(grep ":$profile" $SERVERGROUPSFILE |awk -F':' '{print $1}' |sort |uniq); do
+                                for instance in $(grep ":$profile" $SERVERGROUPSFILE |grep "$host:" |awk -F':' '{print $2}' |sort |uniq); do
+                                        echo "$(eval $TIMESTAMP) :: buildBase :: buildDatasourceListFunction :: $host - $instance - $pool - $jndi"
+                                        echo "$host:$instance:$pool:data-source:$jndi" >> $TMP_FILE
+                                done
+                        done
+                done
+
+                for pool in $($CMD "ls /profile=$profile/subsystem=datasources/xa-data-source="); do
+                        jndi=$($CMD "/profile=$profile/subsystem=datasources/xa-data-source=$pool:read-resource" |grep 'jndi-name' |awk -F'=>' '{print $2}' |sed 's/,//g' |tr -d '[ ]' |sed 's/"//g')
+                        for host in $(grep ":$profile" $SERVERGROUPSFILE |awk -F':' '{print $1}' |sort |uniq); do
+                                for instance in $(grep ":$profile" $SERVERGROUPSFILE |grep "$host:" |awk -F':' '{print $2}' |sort |uniq); do
+                                        echo "$(eval $TIMESTAMP) :: buildBase :: buildDatasourceListFunction :: $host - $instance - $pool - $jndi"
+                                        echo "$host:$instance:$pool:xa-data-source:$jndi" >> $TMP_FILE
+                                done
+                        done
+                done
+        done
+
+        testTmpFile $TMP_FILE $DATASOURCESFILE
 }
 
 function buildServerGroupListFunction() {
@@ -199,35 +229,6 @@ function buildBoundedQueueThreadPoolListFunction {
         testTmpFile $TMP_FILE $THREADPOOLSFILE
 }
 
-function buildDatasourceListFunction {
-        TMP_FILE=$DATA_DIR/moni_tmp.txt && echo "" > $DATA_DIR/moni_tmp.txt
-
-        profiles=$(awk -F':' '{print $5}' $SERVERGROUPSFILE |sort |uniq)
-        for profile in $profiles; do
-                for pool in $($CMD "ls /profile=$profile/subsystem=datasources/data-source="); do
-                        jndi=$($CMD "/profile=$profile/subsystem=datasources/data-source=$pool:read-resource" |grep 'jndi-name' |awk -F'=>' '{print $2}' |sed 's/,//g' |tr -d '[ ]' |sed 's/"//g')
-                        for host in $(grep ":$profile" $SERVERGROUPSFILE |awk -F':' '{print $1}' |sort |uniq); do
-                                for instance in $(grep ":$profile" $SERVERGROUPSFILE |grep "$host:" |awk -F':' '{print $2}' |sort |uniq); do
-                                        echo "$(eval $TIMESTAMP) :: buildBase :: buildDatasourceListFunction :: $host - $instance - $pool - $jndi"
-                                        echo "$host:$instance:$pool:data-source:$jndi" >> $TMP_FILE
-                                done
-                        done
-                done
-
-                for pool in $($CMD "ls /profile=$profile/subsystem=datasources/xa-data-source="); do
-                        jndi=$($CMD "/profile=$profile/subsystem=datasources/xa-data-source=$pool:read-resource" |grep 'jndi-name' |awk -F'=>' '{print $2}' |sed 's/,//g' |tr -d '[ ]' |sed 's/"//g')
-                        for host in $(grep ":$profile" $SERVERGROUPSFILE |awk -F':' '{print $1}' |sort |uniq); do
-                                for instance in $(grep ":$profile" $SERVERGROUPSFILE |grep "$host:" |awk -F':' '{print $2}' |sort |uniq); do
-                                        echo "$(eval $TIMESTAMP) :: buildBase :: buildDatasourceListFunction :: $host - $instance - $pool - $jndi"
-                                        echo "$host:$instance:$pool:xa-data-source:$jndi" >> $TMP_FILE
-                                done
-                        done
-                done
-        done
-
-        testTmpFile $TMP_FILE $DATASOURCESFILE
-}
-
 function getServerGroupListFunction() {
          for line in $(cat $SERVERGROUPSFILE)
          do
@@ -238,6 +239,7 @@ function getServerGroupListFunction() {
                 PROFILE=$(echo $line |awk -F':' '{print $5}')
 
                 echo "$(eval $TIMESTAMP) INSTANCE $ENVIRONMENT $HOST $APP_SERVER $TARGET $INSTANCE $PORT $PROFILE"
+
         done
 }
 
@@ -274,7 +276,8 @@ function buildDeployDiffFunction {
                         INSTANCE=$(echo $file |awk -F':' '{print $3}')
                         APP=$(echo $file |awk -F':' '{print $4}')
                         TARGET=$(grep "$HOST:$INSTANCE:" $SERVERGROUPSFILE |awk -F':' '{print $3}')
-                        HAS=$(cat ${DATA_DIR}/${file} |fgrep '"content" => [{' -A 5 |fgrep -B 5 '}}]' |egrep -v '(\{|\})' |sed 's/,//g; s/0x//g' |tr -d '[ ]' |tr -d '\n')
+                        # HAS=$(cat ${DATA_DIR}/${file} |fgrep '"content" => [{' -A 5 |fgrep -B 5 '}}]' |egrep -v '(\{|\})' |sed 's/,//g; s/0x//g' |tr -d '[ ]' |tr -d '\n')
+                        HAS=$(cat ${DATA_DIR}/${file} |fgrep '"hash" =>' -A 3 |tail -3 |sed 's/[(,|0x| |)]//g' |tr -d '\n')
                         OLDFILE=${DBDIR}/${file}.hist
 
                         if [ $HAS != "" ]; then
@@ -439,7 +442,7 @@ function buildHttpMetricsFunction() {
 
                 if [ $context ]; then
                         file_tmp="$DATA_DIR/buildHM_:$host:$instance:$application"
-                        echo "/host=$host/server=$instance/deployment=$application/subsystem=web:read-attribute(name=active-sessions) > $file_tmp" >> $DATA_DIR/command.txt;
+                        echo "/host=$host/server=$instance/deployment=$application/subsystem=undertow:read-resource(include-runtime=true) > $file_tmp" >> $DATA_DIR/command.txt;
                 fi
         done
 
@@ -470,65 +473,6 @@ function buildHttpMetricsFunction() {
 
         main
         cat $HTTPMETRICFILE
-}
-
-function buildTimmerListFunction() {
-        arrFile=("");
-        echo "" > $DATA_DIR/command.txt
-        echo "" > $TIMMERMETRICFILE
-
-        for line in $(cat $APPLICATIONSFILE); do
-                host=$(echo $line |awk -F':' '{print $1}')
-                instance=$(echo $line |awk -F':' '{print $2}')
-                application=$(echo $line |awk -F':' '{print $3}')
-
-                for ejb in $($CMD "ls /host=$host/server=$instance/deployment=$application/subsystem=ejb3/singleton-bean"); do
-                        file_tmp="$DATA_DIR/buildTM_:$host:$instance:$application:$ejb"
-                        echo "/host=$host/server=$instance/deployment=$application/subsystem=ejb3/singleton-bean=$ejb:read-resource(include-runtime=true) > $file_tmp" >> $DATA_DIR/command.txt;
-                done
-        done
-
-        $CMD --file=$DATA_DIR/command.txt
-
-        function main {
-                for file in $(ls $DATA_DIR/ |grep 'buildTM_'); do
-                        INSTANCE=$(echo $file |awk -F':' '{print $3}')
-                        HOST=$(echo $file |awk -F':' '{print $2}')
-
-                        if [[ $(grep -i 'Failed' ${DATA_DIR}/${file} 2> /dev/null |wc -l) -gt 0 || ! -f ${DATA_DIR}/$file ]]; then
-                                echo "Error - ${DATA_DIR}/${file}"
-                                removeFromCommand "$DATA_DIR/command.txt" "$HOST:$INSTANCE" && rm -rf ${DATA_DIR}/${file}
-                                $CMD --file=$DATA_DIR/command.txt
-                                main
-                        else
-                                APPLICATION=$(echo ${file} |awk -F':' '{print $4}')
-                                EJB=$(echo ${file} |awk -F':' '{print $5}')
-                                TARGET=$(grep "$HOST:$INSTANCE:" $SERVERGROUPSFILE |awk -F':' '{print $3}')
-
-                                if [ $(fgrep '"timers" => []' ${DATA_DIR}/${file} 2> /dev/null |wc -l) -le 0 ]; then
-                                        C=$(grep '"year"' ${DATA_DIR}/${file} 2> /dev/null |wc -l)
-                                        for timmer in $(seq $C); do
-                                                YEAR=$(grep '"year"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-                                                MONTH=$(grep '"month"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-                                                DAYOFMONTH=$(grep '"day-of-month"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-                                                DAYOFWEEK=$(grep '"day-of-week"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-                                                HOUR=$(grep '"hour"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-                                                MINUTE=$(grep '"minute"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-                                                SECOND=$(grep '"second"' ${DATA_DIR}/${file} 2> /dev/null | sed $timmer'q;d' |awk -F'=>' '{print $NF}' |sed 's/"//g' |sed 's/",//g' |sed 's/ //g')
-
-                                                echo "$(eval $TIMESTAMP) EJBTIMMER $ENVIRONMENT $HOST $APP_SERVER $TARGET $INSTANCE $APPLICATION $EJB \"$YEAR\" \"$MONTH\" \"$DAYOFMONTH\" \"$DAYOFWEEK\" \"$HOUR\" \"$MINUTE\" \"$SECOND\"" >> $TIMMERMETRICFILE
-                                                C=$(($C + 1))
-                                        done
-
-                                        removeFromCommand "$DATA_DIR/command.txt" $file && rm -rf ${DATA_DIR}/${file}
-                                fi
-                        fi
-
-                done
-        }
-
-        main
-        cat $TIMMERMETRICFILE
 }
 
 ######################################################################
@@ -577,6 +521,7 @@ case $OPT in
         ;;
 
         buildBase)
+                rm -rf $DATA_DIR/*.txt;
                 echo "$(eval $TIMESTAMP) :: buildHostListFunction"
                 buildHostListFunction
 
@@ -585,9 +530,6 @@ case $OPT in
 
                 echo "$(eval $TIMESTAMP) :: buildServerGroupListFunction"
                 buildServerGroupListFunction
-
-                echo "$(eval $TIMESTAMP) :: buildBoundedQueueThreadPoolListFunction"
-                buildBoundedQueueThreadPoolListFunction
 
                 echo "$(eval $TIMESTAMP) :: buildApplicationListFunction"
                 buildApplicationListFunction
@@ -599,12 +541,11 @@ case $OPT in
         buildMetrics)
                 getServerGroupListFunction
                 getApplicationListFunction
-                buildTimmerListFunction
                 buildJVMMemoryMetricsFunction
                 buildDatasourceMetricsFunction
                 buildHttpMetricsFunction
-                buildBoundedQueueThreadPoolMetricsFunction
-                buildDeployDiffFunction
+                # ERR buildBoundedQueueThreadPoolMetricsFunction, nao existe mais !!!
+                uildDeployDiffFunction
 
         ;;
 esac
